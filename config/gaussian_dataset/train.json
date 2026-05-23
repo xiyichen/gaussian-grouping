@@ -1,6 +1,6 @@
 {
     "densify_until_iter": 10000 ,
-    "num_classes": 256,
+    "num_classes": 1,
     "reg3d_interval": 5,
     "reg3d_k": 5,
     "reg3d_lambda_val": 2,

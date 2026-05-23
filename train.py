@@ -22,14 +22,15 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import wandb
 import json
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, use_wandb, method, data_source):
     first_iter = 0
     prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, method=method, data_source=data_source)
     gaussians.training_setup(opt)
-    num_classes = dataset.num_classes
-    print("Num classes: ",num_classes)
+    # num_classes = dataset.num_classes
+    num_classes = scene.num_classes
+    print("Num classes: ", num_classes)
     classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
     cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
     cls_optimizer = torch.optim.Adam(classifier.parameters(), lr=5e-4)
@@ -84,10 +85,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         image, viewspace_point_tensor, visibility_filter, radii, objects = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg["render_object"]
 
         # Object Loss
-        gt_obj = viewpoint_cam.objects.cuda().long()
-        logits = classifier(objects)
-        loss_obj = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
-        loss_obj = loss_obj / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+        # gt_obj = viewpoint_cam.objects.cuda().long()
+        # logits = classifier(objects)
+        # loss_obj = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+        # loss_obj = loss_obj / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+
+        if viewpoint_cam.objects is not None:
+            gt_obj = viewpoint_cam.objects.cuda().long()
+            logits = classifier(objects)
+            loss_obj = cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze().mean()
+            loss_obj = loss_obj / torch.log(torch.tensor(num_classes))  # normalize to (0,1)
+        else:
+            loss_obj = torch.tensor(0.0).cuda()
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -216,9 +225,13 @@ if __name__ == "__main__":
     # Add an argument for the configuration file
     parser.add_argument("--config_file", type=str, default="config.json", help="Path to the configuration file")
     parser.add_argument("--use_wandb", action='store_true', default=False, help="Use wandb to record loss value")
+    parser.add_argument("--method", type=str, default="ours", help="Method to use for training", choices=['ours', 'panst3r', 'sam3', 'gt'])
+    parser.add_argument("--data_source", type=str, default="dslr", help="Data source to use for training", choices=['dslr', 'iphone'])
 
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
+    print("Method: ", args.method)
+    print("Data Source: ", args.data_source)
 
     # Read and parse the configuration file
     try:
@@ -232,7 +245,7 @@ if __name__ == "__main__":
         exit(1)
 
     args.densify_until_iter = config.get("densify_until_iter", 15000)
-    args.num_classes = config.get("num_classes", 200)
+    # args.num_classes = config.get("num_classes", 200)
     args.reg3d_interval = config.get("reg3d_interval", 2)
     args.reg3d_k = config.get("reg3d_k", 5)
     args.reg3d_lambda_val = config.get("reg3d_lambda_val", 2)
@@ -252,7 +265,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.use_wandb)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.use_wandb, args.method, args.data_source)
 
     # All done
     print("\nTraining complete.")

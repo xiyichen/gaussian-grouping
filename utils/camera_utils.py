@@ -51,7 +51,7 @@ def loadCam(args, id, cam_info, resolution_scale):
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
-                  objects=torch.from_numpy(np.array(cam_info.objects)))
+                  objects=torch.from_numpy(np.array(cam_info.objects)) if cam_info.objects is not None else None)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

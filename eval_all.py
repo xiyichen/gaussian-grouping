@@ -24,6 +24,7 @@ import cv2
 from sklearn.decomposition import PCA
 from typing import Any, Dict, List, Set, Tuple
 import pdb
+import copy, json
 
 def _is_set_int(value: Any) -> bool:
     """Check wheter value is a `Set[int]`"""
@@ -353,7 +354,7 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
         bg_p = pred_obj == 0
         pano_pred[bg_p] = torch.tensor([0, 0], device=pano_pred.device, dtype=pano_pred.dtype)
-        print(gt_objects.max(), pred_obj.max())
+        # print(gt_objects.max(), pred_obj.max())
 
         # pdb.set_trace()
         metric_pq, metric_sq, metric_rq = panoptic_quality(
@@ -370,15 +371,16 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         # pdb.set_trace()
 
         rgb_mask = feature_to_rgb(rendering_obj)
-        Image.fromarray(rgb_mask).save(os.path.join(colormask_path, '{0:05d}'.format(idx) + ".png"))
-        Image.fromarray(gt_rgb_mask).save(os.path.join(gt_colormask_path, '{0:05d}'.format(idx) + ".png"))
-        Image.fromarray(pred_obj_mask).save(os.path.join(pred_obj_path, '{0:05d}'.format(idx) + ".png"))
+        # Image.fromarray(rgb_mask).save(os.path.join(colormask_path, '{0:05d}'.format(idx) + ".png"))
+        # Image.fromarray(gt_rgb_mask).save(os.path.join(gt_colormask_path, '{0:05d}'.format(idx) + ".png"))
+        # Image.fromarray(pred_obj_mask).save(os.path.join(pred_obj_path, '{0:05d}'.format(idx) + ".png"))
         gt = view.original_image[0:3, :, :]
-        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        # torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
+        # torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
     print("Average PQ: ", np.mean(pqs))
     print("Average SQ: ", np.mean(sqs))
     print("Average RQ: ", np.mean(rqs))
+    pq, sq, rq = np.mean(pqs), np.mean(sqs), np.mean(rqs)
     out_path = os.path.join(render_path[:-8],'concat')
     makedirs(out_path,exist_ok=True)
     fourcc = cv2.VideoWriter.fourcc(*'DIVX') 
@@ -396,18 +398,19 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
         result = np.hstack([gt,rgb,gt_obj,pred_obj,render_obj])
         result = result.astype('uint8')
 
-        Image.fromarray(result).save(os.path.join(out_path,file_name))
+        # Image.fromarray(result).save(os.path.join(out_path,file_name))
         # writer.write(result[:,:,::-1])
 
     # writer.release()
+    return pq, sq, rq
 
 
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, method : str, data_source : str):
+def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False, method=method, data_source=data_source)
+        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
         
-        num_classes = scene.num_classes
+        num_classes = dataset.num_classes
         print("Num classes: ",num_classes)
 
         classifier = torch.nn.Conv2d(gaussians.num_objects, num_classes, kernel_size=1)
@@ -418,11 +421,12 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier)
+            render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier)
 
         if (not skip_test) and (len(scene.getTestCameras()) > 0):
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, classifier)
-
+            pq, sq, rq = render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background, classifier)
+            return pq, sq, rq
+    
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Testing script parameters")
@@ -432,14 +436,43 @@ if __name__ == "__main__":
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--method", type=str, default="ours", help="Method to use for training", choices=['ours', 'panst3r', 'sam3', 'gt'])
-    parser.add_argument("--data_source", type=str, default="dslr", help="Data source to use for training", choices=['dslr', 'iphone'])
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
-    print("Method: ", args.method)
-    print("Data Source: ", args.data_source)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.method, args.data_source)
+    # pdb.set_trace()
+
+    scene_names = [
+        "0d2ee665be",
+        "1ada7a0617",
+        "3e8bba0176",
+        "3f15a9266d",
+        "5ee7c22ba0",
+        "7bc286c1b6",
+        "a24f64f7fb",
+        "5748ce6f01",
+        "f9f95681fd",
+        "3864514494"
+    ]
+    with open('./num_instances.json', 'r') as f:
+        num_instances_dict = json.load(f)
+    pqs = []
+    sqs = []
+    rqs = []
+    for scene_name in scene_names:
+        print(scene_name)
+        args_ = copy.deepcopy(args)
+        args_.source_path = args_.source_path.replace('1ada7a0617', scene_name)
+        args_.num_classes = num_instances_dict[scene_name]
+        args_.model_path = args_.model_path.replace('1ada7a0617', scene_name)
+
+        pq, sq, rq = render_sets(model.extract(args_), args_.iteration, pipeline.extract(args_), args_.skip_train, args_.skip_test)
+        pqs.append(pq)
+        sqs.append(sq)
+        rqs.append(rq)
+    
+    print("Average PQ: ", np.mean(pqs))
+    print("Average SQ: ", np.mean(sqs))
+    print("Average RQ: ", np.mean(rqs))
